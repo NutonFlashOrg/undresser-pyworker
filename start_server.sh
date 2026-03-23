@@ -222,18 +222,44 @@ if [ "$IS_DEPLOYMENT" = "true" ]; then
     DEPLOY_DIR="/workspace/deployment"
     mkdir -p "$DEPLOY_DIR"
 
-    # Download deployment code via instance API key
+    VAST_API_BASE="${VAST_API_BASE:-https://console.vast.ai}"
+
+    # Download deployment code, retrying until the blob is available on S3.
+    # The s3_key exists in the DB as soon as the deployment is created, but the
+    # actual upload may still be in flight from the client side.
     echo "Downloading deployment code..."
-    DOWNLOAD_RESPONSE=$(curl -sS \
-        -H "Authorization: Bearer $CONTAINER_API_KEY" \
-        "https://console.vast.ai/api/v0/deployment/${DEPLOYMENT_ID}/download_url/")
-    DOWNLOAD_URL=$(python3 -c "import sys,json; print(json.load(sys.stdin)['download_url'])" <<< "$DOWNLOAD_RESPONSE")
+    RETRY=0
+    while true; do
+        DOWNLOAD_RESPONSE=$(curl -sS \
+            -H "Authorization: Bearer $CONTAINER_API_KEY" \
+            "${VAST_API_BASE}/api/v0/deployment/${DEPLOYMENT_ID}/download_url/")
+        DOWNLOAD_URL=$(python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    print(d.get('download_url') or '')
+except: print('')
+" <<< "$DOWNLOAD_RESPONSE")
 
-    if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "None" ]; then
-        report_error_and_exit "Failed to get deployment download URL"
-    fi
+        if [ -z "$DOWNLOAD_URL" ] || [ "$DOWNLOAD_URL" = "None" ]; then
+            RETRY=$((RETRY + 1))
+            echo "No download URL yet (attempt $RETRY), retrying in 10s... response: $DOWNLOAD_RESPONSE"
+            sleep 10
+            continue
+        fi
 
-    curl -sS -L "$DOWNLOAD_URL" -o "$DEPLOY_DIR/deployment.tar.gz"
+        # Got a URL — try the actual S3 download
+        HTTP_CODE=$(curl -sS -L -o "$DEPLOY_DIR/deployment.tar.gz" -w "%{http_code}" "$DOWNLOAD_URL")
+        if [ "$HTTP_CODE" = "200" ]; then
+            break
+        fi
+
+        RETRY=$((RETRY + 1))
+        echo "S3 download returned HTTP $HTTP_CODE (attempt $RETRY), blob not yet uploaded. Retrying in 10s..."
+        rm -f "$DEPLOY_DIR/deployment.tar.gz"
+        sleep 10
+    done
+
     cd "$DEPLOY_DIR" && tar xzf deployment.tar.gz
     echo "Deployment code extracted."
 
