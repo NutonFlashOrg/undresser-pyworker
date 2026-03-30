@@ -112,8 +112,21 @@ if ! grep -q "VAST" /etc/environment; then
     fi
 fi
 
-if [ ! -d "$ENV_PATH" ]
-then
+if [ "${USE_SYSTEM_PYTHON:-}" = "true" ]; then
+    echo "Using system Python: $(which python3)"
+    if ! which uv > /dev/null 2>&1; then
+        if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
+            report_error_and_exit "Failed to install uv package manager"
+        fi
+        if [[ -f ~/.local/bin/env ]]; then
+            if ! source ~/.local/bin/env; then
+                report_error_and_exit "Failed to source uv environment"
+            fi
+        fi
+    fi
+    install_vastai_sdk
+    touch ~/.no_auto_tmux
+elif [ ! -d "$ENV_PATH" ]; then
     echo "setting up venv"
     if ! which uv; then
         if ! curl -LsSf https://astral.sh/uv/install.sh | sh; then
