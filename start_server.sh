@@ -180,7 +180,7 @@ else
             report_error_and_exit "Failed to source uv environment"
         fi
     fi
-    if ! source "$WORKSPACE_DIR/worker-env/bin/activate"; then
+    if ! source "$ENV_PATH/bin/activate"; then
         report_error_and_exit "Failed to activate existing virtual environment"
     fi
     echo "environment activated"
