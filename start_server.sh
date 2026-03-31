@@ -2,6 +2,13 @@
 
 set -e -o pipefail
 
+# Check for force update flag
+FORCE_UPDATE=false
+if [ -f "/.force_update" ]; then
+    echo "Force update flag detected at /.force_update"
+    FORCE_UPDATE=true
+fi
+
 WORKSPACE_DIR="${WORKSPACE_DIR:-/workspace}"
 
 SERVER_DIR="$WORKSPACE_DIR/vast-pyworker"
@@ -50,6 +57,10 @@ function install_vastai_sdk() {
     local uv_flags=()
     if [ "${USE_SYSTEM_PYTHON:-}" = "true" ]; then
         uv_flags+=(--system --break-system-packages)
+    fi
+    if [ "$FORCE_UPDATE" = true ]; then
+        uv_flags+=(--force-reinstall)
+        echo "Force reinstalling vastai-sdk"
     fi
 
     # If SDK_BRANCH is set, install vastai-sdk from the vast-sdk repo at that branch/tag/commit.
@@ -150,10 +161,27 @@ elif [ ! -d "$ENV_PATH" ]; then
         if ! git clone "${PYWORKER_REPO:-https://github.com/vast-ai/pyworker}" "$SERVER_DIR"; then
             report_error_and_exit "Failed to clone pyworker repository"
         fi
+    elif [ "$FORCE_UPDATE" = true ]; then
+        echo "Force updating pyworker repository"
+        if ! (cd "$SERVER_DIR" && git fetch --all); then
+            report_error_and_exit "Failed to fetch pyworker repository updates"
+        fi
     fi
     if [[ -n ${PYWORKER_REF:-} ]]; then
-        if ! (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF"); then
-            report_error_and_exit "Failed to checkout pyworker reference: $PYWORKER_REF"
+        if [ "$FORCE_UPDATE" = true ]; then
+            echo "Force updating to pyworker reference: $PYWORKER_REF"
+            if ! (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF" && git pull); then
+                report_error_and_exit "Failed to force update pyworker reference: $PYWORKER_REF"
+            fi
+        else
+            if ! (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF"); then
+                report_error_and_exit "Failed to checkout pyworker reference: $PYWORKER_REF"
+            fi
+        fi
+    elif [ "$FORCE_UPDATE" = true ]; then
+        echo "Force updating pyworker to latest"
+        if ! (cd "$SERVER_DIR" && git pull); then
+            report_error_and_exit "Failed to pull latest pyworker changes"
         fi
     fi
 
@@ -185,6 +213,39 @@ else
     fi
     echo "environment activated"
     echo "venv: $VIRTUAL_ENV"
+
+    # Handle force update for existing environment
+    if [ "$FORCE_UPDATE" = true ]; then
+        echo "Performing force update on existing environment"
+
+        if [[ -d $SERVER_DIR ]]; then
+            echo "Force updating pyworker repository"
+            if ! (cd "$SERVER_DIR" && git fetch --all); then
+                report_error_and_exit "Failed to fetch pyworker repository updates"
+            fi
+
+            if [[ -n ${PYWORKER_REF:-} ]]; then
+                echo "Force updating to pyworker reference: $PYWORKER_REF"
+                if ! (cd "$SERVER_DIR" && git checkout "$PYWORKER_REF" && git pull); then
+                    report_error_and_exit "Failed to force update pyworker reference: $PYWORKER_REF"
+                fi
+            else
+                echo "Force updating pyworker to latest"
+                if ! (cd "$SERVER_DIR" && git pull); then
+                    report_error_and_exit "Failed to pull latest pyworker changes"
+                fi
+            fi
+        fi
+
+        install_vastai_sdk
+    fi
+fi
+
+# Remove force update flag after successful update
+if [ "$FORCE_UPDATE" = true ]; then
+    echo "Removing force update flag"
+    rm -f "/.force_update"
+    echo "Force update completed successfully"
 fi
 
 if [ "$USE_SSL" = true ]; then
@@ -222,12 +283,23 @@ EOF
         report_error_and_exit "Failed to generate SSL certificate request"
     fi
 
-    if ! curl --header 'Content-Type: application/octet-stream' \
-        --data-binary @/etc/instance.csr \
-        -X \
-        POST "https://console.vast.ai/api/v0/sign_cert/?instance_id=$CONTAINER_ID" > /etc/instance.crt; then
-        report_error_and_exit "Failed to sign SSL certificate"
-    fi
+    max_retries=5
+    retry_delay=2
+    for attempt in $(seq 1 "$max_retries"); do
+        http_code=$(curl -sS -o /etc/instance.crt -w '%{http_code}' \
+            --header 'Content-Type: application/octet-stream' \
+            --data-binary @/etc/instance.csr \
+            -X POST "https://console.vast.ai/api/v0/sign_cert/?instance_id=$CONTAINER_ID")
+        if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            break
+        fi
+        echo "SSL cert signing attempt $attempt/$max_retries failed (HTTP $http_code)"
+        if [ "$attempt" -eq "$max_retries" ]; then
+            report_error_and_exit "Failed to sign SSL certificate after $max_retries attempts (HTTP $http_code)"
+        fi
+        sleep "$retry_delay"
+        retry_delay=$((retry_delay * 2))
+    done
 fi
 
 export REPORT_ADDR WORKER_PORT USE_SSL UNSECURED
