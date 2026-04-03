@@ -13,8 +13,8 @@ Vast workload calibration on ONE reference GPU (boot or manual).
 
 - WAN22_I2V_LONG_5090 → WAN22_I2V_LONG_5090
 - WAN22_IV2V_FACESWAP_5090 → WAN22_IV2V_FACESWAP_5090
-- ZIMAGE_TURBO_I2I_4090 → ZIMAGE_TURBO_I2I_4090
-- FLUX_S2_I2I_4090 → FLUX_S2_I2I_4090
+- ZIMAGE_TURBO_I2I_5090 → ZIMAGE_TURBO_I2I_5090
+- FLUX_S2_I2I_5090 → FLUX_S2_I2I_5090
 
 If ``BENCHMARK_GENERATION_LANE`` is **unset**, runs **all** manifest entries (handy for
 one-off local runs). Vast benchmark templates always set the lane → **one** prod JSON.
@@ -23,7 +23,7 @@ Use ``--all-manifest-lanes`` to time every manifest entry even when the env var 
 Manifest example (JSON file):
   {
     "WAN22_I2V_LONG_5090": "wan22-i2v-long_app.json",
-    "FLUX_S2_I2I_4090": "flux-s2-i2i_app.json"
+    "FLUX_S2_I2I_5090": "flux-s2-i2i_app.json"
   }
 
 Each prod file: {"input": {"workflow": {...}, "user_id", "generation_id", "input_images", ...}}
@@ -169,8 +169,8 @@ def _normalize_lane(s: str) -> str:
 _BENCH_LANE_TO_PROD_MANIFEST_KEY: dict[str, str] = {
     "WAN22_I2V_LONG_5090": "WAN22_I2V_LONG_5090",
     "WAN22_IV2V_FACESWAP_5090": "WAN22_IV2V_FACESWAP_5090",
-    "ZIMAGE_TURBO_I2I_4090": "ZIMAGE_TURBO_I2I_4090",
-    "FLUX_S2_I2I_4090": "FLUX_S2_I2I_4090",
+    "ZIMAGE_TURBO_I2I_5090": "ZIMAGE_TURBO_I2I_5090",
+    "FLUX_S2_I2I_5090": "FLUX_S2_I2I_5090",
 }
 
 

@@ -134,7 +134,7 @@ To screen for underperforming hardware, set `BENCHMARK_TEST_STEPS` to match your
 
 ```bash
 # 1. Measure it/sec on your reference machine
-# RTX 4090 typically achieves ~43 it/sec with SD1.5
+# RTX 5090 typically achieves ~43 it/sec with SD1.5
 
 # 2. Calculate required steps
 # 90 seconds × 43 it/sec = 3870 steps
