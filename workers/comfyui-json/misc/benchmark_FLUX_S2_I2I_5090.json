@@ -275,9 +275,9 @@
   "5:134": {
     "inputs": {
       "lora_name": "ass_slider_klein9b.safetensors",
-      "strength_model": 4,
+      "strength_model": -4,
       "model": [
-        "5:133",
+        "5:136",
         0
       ]
     },
@@ -286,10 +286,10 @@
       "title": "Load LoRA"
     }
   },
-  "5:133": {
+  "5:136": {
     "inputs": {
-      "lora_name": "implant_slider_klein9b.safetensors",
-      "strength_model": 10,
+      "lora_name": "breast_slider_klein9b.safetensors",
+      "strength_model": 4,
       "model": [
         "5:117",
         0
