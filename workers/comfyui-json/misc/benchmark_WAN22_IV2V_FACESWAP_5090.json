@@ -471,7 +471,10 @@
         "151",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "force_offload": false,
       "frame_window_size": 77,
       "colormatch": "disabled",
@@ -769,7 +772,10 @@
         "346",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "images": [
         "173",
         0
@@ -786,7 +792,10 @@
         "346",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "images": [
         "172",
         1
@@ -803,7 +812,10 @@
         "346",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "images": [
         "309",
         0
@@ -820,7 +832,10 @@
         "346",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "masks": [
         "108",
         0
@@ -955,7 +970,7 @@
         0
       ],
       "on_true": [
-        "340",
+        "399",
         0
       ],
       "on_false": [
@@ -1020,10 +1035,13 @@
   "350": {
     "inputs": {
       "start_index": [
-        "347",
+        "401",
         0
       ],
-      "num_frames": 77,
+      "num_frames": [
+        "400",
+        0
+      ],
       "images": [
         "28",
         0
@@ -1136,6 +1154,92 @@
     "class_type": "RAMCleanup",
     "_meta": {
       "title": "RAM Cleanup (terminal — malloc_trim)"
+    }
+  },
+  "397": {
+    "inputs": {
+      "value": 77
+    },
+    "class_type": "INTConstant",
+    "_meta": {
+      "title": "CHUNK_SIZE_MAX (77)"
+    }
+  },
+  "398": {
+    "inputs": {
+      "comparison": "a < b",
+      "a": [
+        "63",
+        1
+      ],
+      "b": [
+        "397",
+        0
+      ]
+    },
+    "class_type": "easy compare",
+    "_meta": {
+      "title": "is_short_video (frame_count < 77)"
+    }
+  },
+  "399": {
+    "inputs": {
+      "boolean": [
+        "398",
+        0
+      ],
+      "on_true": [
+        "349",
+        0
+      ],
+      "on_false": [
+        "340",
+        0
+      ]
+    },
+    "class_type": "easy ifElse",
+    "_meta": {
+      "title": "last_start_safe = is_short ? 0 : last_start"
+    }
+  },
+  "400": {
+    "inputs": {
+      "boolean": [
+        "398",
+        0
+      ],
+      "on_true": [
+        "63",
+        1
+      ],
+      "on_false": [
+        "397",
+        0
+      ]
+    },
+    "class_type": "easy ifElse",
+    "_meta": {
+      "title": "chunk_size = is_short ? frame_count : 77"
+    }
+  },
+  "401": {
+    "inputs": {
+      "boolean": [
+        "398",
+        0
+      ],
+      "on_true": [
+        "349",
+        0
+      ],
+      "on_false": [
+        "347",
+        0
+      ]
+    },
+    "class_type": "easy ifElse",
+    "_meta": {
+      "title": "drop_count_safe = is_short ? 0 : drop_count"
     }
   }
 }
