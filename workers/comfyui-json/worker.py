@@ -109,15 +109,60 @@ def _get_benchmark_payload() -> dict:
 
     if "workflow" in workflow:
         workflow = workflow["workflow"]
+
+    # Auto-detect path-mode by scanning the workflow's class_types. If the
+    # workflow uses VHS_LoadVideo (Tokyo Sage chained on WAN22_IV2V_FACESWAP_5090),
+    # we route image+video through path-mode injection — same pipeline as
+    # production. Other benchmark workflows still use ETN_LoadImageBase64 +
+    # legacy base64 single-image. This means BENCHMARK_VIDEO_* env vars can be
+    # set globally across every lane: worker just ignores them when the lane's
+    # workflow doesn't have a video loader.
+    class_types = {
+        n.get("class_type", "")
+        for n in workflow.values()
+        if isinstance(n, dict)
+    }
+    use_path_mode = "VHS_LoadVideo" in class_types
+
     input_images: list[dict] = []
-    bucket = (
+    img_bucket = (
         os.getenv("BENCHMARK_IMAGE_BUCKET")
         or os.getenv("S3_BUCKET")
         or os.getenv("S3_BUCKET_NAME")
     )
-    key = (os.getenv("BENCHMARK_IMAGE_KEY") or "").strip()
-    if bucket and key:
-        input_images.append({"bucket": bucket, "key": key})
+    img_key = (os.getenv("BENCHMARK_IMAGE_KEY") or "").strip()
+    vid_bucket = (
+        os.getenv("BENCHMARK_VIDEO_BUCKET")
+        or os.getenv("S3_BUCKET")
+        or os.getenv("S3_BUCKET_NAME")
+    )
+    vid_key = (os.getenv("BENCHMARK_VIDEO_KEY") or "").strip()
+
+    if use_path_mode:
+        if img_bucket and img_key:
+            input_images.append({
+                "bucket": img_bucket,
+                "key": img_key,
+                "title": os.getenv("BENCHMARK_IMAGE_TITLE", "reference_image"),
+                "content_type": os.getenv(
+                    "BENCHMARK_IMAGE_CONTENT_TYPE", "image/jpeg"
+                ),
+                "inject_mode": "path",
+            })
+        if vid_bucket and vid_key:
+            input_images.append({
+                "bucket": vid_bucket,
+                "key": vid_key,
+                "title": os.getenv("BENCHMARK_VIDEO_TITLE", "reference_video"),
+                "content_type": os.getenv(
+                    "BENCHMARK_VIDEO_CONTENT_TYPE", "video/mp4"
+                ),
+                "inject_mode": "path",
+            })
+    else:
+        # Legacy base64 mode (ETN_LoadImageBase64 benchmarks on other lanes).
+        if img_bucket and img_key:
+            input_images.append({"bucket": img_bucket, "key": img_key})
 
     lane = _normalized_benchmark_lane()
     bench_input: dict = {
