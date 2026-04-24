@@ -218,11 +218,56 @@ def _input_entry_kind(entry: dict, index: int) -> str:
     return "image"
 
 
+def _input_inject_mode(entry: dict) -> str:
+    """Return ``"path"`` if entry sets ``inject_mode="path"``, else ``"base64"`` (default).
+
+    ``base64`` is the legacy/production mode: downloaded bytes are base64-encoded into
+    ``ETN_LoadImageBase64`` node widgets. ``path`` is used by workflows that keep
+    ``LoadImage`` / ``VHS_LoadVideo`` nodes — the file is written to
+    ``/app/input/<run_subdir>/`` and the node's path widget is rewritten.
+    """
+    mode = str(entry.get("inject_mode") or "").strip().lower()
+    return "path" if mode == "path" else "base64"
+
+
+def _input_asset_type(entry: dict) -> str:
+    """Return ``"image"`` / ``"video"`` / ``"audio"`` for path-mode entries.
+
+    Priority: explicit ``content_type`` → file extension → ``"image"`` fallback.
+    """
+    ct = str(entry.get("content_type") or "").strip().lower()
+    if ct.startswith("image/"):
+        return "image"
+    if ct.startswith("video/"):
+        return "video"
+    if ct.startswith("audio/"):
+        return "audio"
+    ext = Path(str(entry.get("key") or "")).suffix.lower()
+    if ext in (".mp4", ".mov", ".webm", ".mkv", ".avi"):
+        return "video"
+    if ext in (".wav", ".flac", ".mp3", ".ogg", ".m4a", ".aac"):
+        return "audio"
+    return "image"
+
+
 def _download_input_images(
     input_images: list[dict],
     input_dir: Path,
-) -> tuple[list[tuple[str, Path]], list[tuple[str, Path]]]:
-    """Download S3 objects from ``input_images``. Returns (image_rows, audio_rows) as [(title, path), ...]."""
+) -> tuple[
+    list[tuple[str, Path]],
+    list[tuple[str, Path]],
+    list[tuple[str, Path, str]],
+]:
+    """Download S3 objects from ``input_images``. Returns ``(image_rows, audio_rows, path_rows)``.
+
+    - ``image_rows`` / ``audio_rows`` — base64-mode entries, consumed by
+      ``ETN_LoadImageBase64`` injection (legacy production behaviour).
+    - ``path_rows`` — entries with ``inject_mode="path"``; each row is
+      ``(title, local_scratch_path, asset_type)`` where ``asset_type`` is
+      ``"image"``, ``"video"``, or ``"audio"``. The caller copies these into
+      ``/app/input/<run_subdir>/`` and rewrites ``LoadImage`` / ``VHS_LoadVideo``
+      widgets.
+    """
     import boto3
 
     try:
@@ -252,12 +297,35 @@ def _download_input_images(
     input_dir.mkdir(parents=True, exist_ok=True)
     images: list[tuple[str, Path]] = []
     audios: list[tuple[str, Path]] = []
+    paths: list[tuple[str, Path, str]] = []
     for i, entry in enumerate(input_images):
         bucket = entry.get("bucket")
         key = entry.get("key")
         title = (entry.get("title") or "").strip()
         if not bucket or not key:
             raise RuntimeError(f"input_images[{i}] missing bucket or key")
+
+        if _input_inject_mode(entry) == "path":
+            asset_type = _input_asset_type(entry)
+            ext = Path(key).suffix or {
+                "image": ".png",
+                "video": ".mp4",
+                "audio": ".wav",
+            }.get(asset_type, ".bin")
+            safe_name = _safe_component(title) if title else f"input_{i}"
+            local_path = (input_dir / f"{safe_name}{ext}").resolve()
+            if not str(local_path).startswith(str(input_dir.resolve())):
+                raise RuntimeError("Invalid input path traversal")
+            with S3_IO_SEM:
+                download_file_with_retry(client, bucket, key, str(local_path))
+            logger.info(
+                "Downloaded %s/%s -> %s (path-mode %s)",
+                bucket, key, local_path, asset_type,
+            )
+            paths.append((title, local_path, asset_type))
+            continue
+
+        # base64 mode (legacy / production)
         kind = _input_entry_kind(entry, i)
         ext = Path(key).suffix or (".wav" if kind == "audio" else ".jpg")
         safe_name = _safe_component(title) if title else f"input_{i}"
@@ -272,7 +340,7 @@ def _download_input_images(
             audios.append(row)
         else:
             images.append(row)
-    return images, audios
+    return images, audios, paths
 
 
 def _comfy_input_root() -> Path:
@@ -307,8 +375,11 @@ def _patch_workflow(
     run_subdir: str,
     job_input: dict,
     downloaded_images: list[tuple[str, Path]],
+    path_assets: list[tuple[str, Path, str]] | None = None,
 ) -> dict:
-    """Patch workflow: sageattn override, VHS_VideoCombine prefix, ETN_LoadImageBase64 injection, prompt."""
+    """Patch workflow: sageattn override, VHS_VideoCombine prefix, ETN_LoadImageBase64
+    injection (base64 mode), LoadImage / VHS_LoadVideo injection (path mode), prompt.
+    """
     wf = copy.deepcopy(workflow)
     # sageattn override: none (runtime patches it per GPU)
     for node in wf.values():
@@ -342,6 +413,74 @@ def _patch_workflow(
         for nid, _, node in etn_nodes:
             if not (node.get("inputs") or {}).get("image"):
                 raise RuntimeError(f"Failed to inject image into ETN node {nid}")
+
+    # Path-mode injection (LoadImage / VHS_LoadVideo).
+    # Files are staged under /app/input/<run_subdir>/ so Comfy's loaders can resolve
+    # them relative to the configured input root. No effect when path_assets is empty
+    # — preserves production base64-only behaviour for lanes that never opt in.
+    path_assets = path_assets or []
+    if path_assets:
+        comfy_input_root = _comfy_input_root().resolve()
+        target_dir = (comfy_input_root / run_subdir).resolve()
+        if not str(target_dir).startswith(str(comfy_input_root)):
+            raise RuntimeError("Invalid comfy input path traversal")
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        staged: list[tuple[str, str, str]] = []  # (title, rel_path, asset_type)
+        for title, local_path, asset_type in path_assets:
+            if not local_path.exists():
+                raise RuntimeError(
+                    f"Path-mode asset missing at {local_path} (title={title!r})"
+                )
+            dest = (target_dir / local_path.name).resolve()
+            if not str(dest).startswith(str(comfy_input_root)):
+                raise RuntimeError("Invalid comfy input path traversal")
+            shutil.copyfile(local_path, dest)
+            rel_path = f"{run_subdir}/{local_path.name}"
+            staged.append((title, rel_path, asset_type))
+            logger.info(
+                "Staged path-mode asset title=%r -> %s (%s)",
+                title, dest, asset_type,
+            )
+
+        images_by_title = {t: p for t, p, k in staged if k == "image" and t}
+        images_no_title = [p for t, p, k in staged if k == "image" and not t]
+        videos_by_title = {t: p for t, p, k in staged if k == "video" and t}
+        videos_no_title = [p for t, p, k in staged if k == "video" and not t]
+
+        matched: set[str] = set()
+        for nid, node in wf.items():
+            if not isinstance(node, dict):
+                continue
+            ct = node.get("class_type")
+            title = ((node.get("_meta") or {}).get("title") or "").strip()
+            if ct == "LoadImage":
+                rel = images_by_title.get(title) if title else None
+                if rel is None and images_no_title:
+                    rel = images_no_title.pop(0)
+                if rel is None:
+                    continue
+                node.setdefault("inputs", {})["image"] = rel
+                matched.add(rel)
+            elif ct == "VHS_LoadVideo":
+                rel = videos_by_title.get(title) if title else None
+                if rel is None and videos_no_title:
+                    rel = videos_no_title.pop(0)
+                if rel is None:
+                    continue
+                inputs = node.setdefault("inputs", {})
+                inputs["video"] = rel
+                inputs["frame_load_cap"] = 0
+                matched.add(rel)
+
+        unmatched = [
+            (title, rel, kind) for title, rel, kind in staged if rel not in matched
+        ]
+        if unmatched:
+            raise RuntimeError(
+                f"Path-mode assets have no matching loader node: {unmatched}"
+            )
+
     # Prompt injection
     prompt_title = (job_input.get("prompt_node_title") or "").strip()
     user_prompt = (job_input.get("user_prompt") or "").strip()
@@ -378,6 +517,7 @@ def transform_app_to_vast(payload: dict) -> dict:
     run_subdir = _make_job_subdir(user_id, generation_id, job_id)
     job_input = dict(inp) if isinstance(inp, dict) else {}
     downloaded_images: list[tuple[str, Path]] = []
+    path_assets: list[tuple[str, Path, str]] = []
     download_entries: list[dict] = []
     for e in input_images:
         if isinstance(e, dict):
@@ -386,7 +526,7 @@ def transform_app_to_vast(payload: dict) -> dict:
     scratch_dir: Path | None = None
     if download_entries:
         scratch_dir = Path("/tmp/input") / run_subdir
-        downloaded_images, _audios = _download_input_images(
+        downloaded_images, _audios, path_assets = _download_input_images(
             download_entries, scratch_dir
         )
 
@@ -396,6 +536,7 @@ def transform_app_to_vast(payload: dict) -> dict:
             run_subdir,
             job_input,
             downloaded_images,
+            path_assets=path_assets,
         )
         randomize_workflow_seeds(patched)
         s3_cfg = _get_s3_config()
