@@ -1,7 +1,7 @@
 {
   "27": {
     "inputs": {
-      "steps": 4,
+      "steps": 1,
       "cfg": 1,
       "shift": 5,
       "seed": 1234,
