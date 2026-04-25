@@ -645,7 +645,7 @@
   },
   "305": {
     "inputs": {
-      "blocks_to_swap": 20,
+      "blocks_to_swap": 0,
       "offload_img_emb": false,
       "offload_txt_emb": false,
       "use_non_blocking": false,
@@ -1128,7 +1128,7 @@
   },
   "395": {
     "inputs": {
-      "offload_model": true,
+      "offload_model": false,
       "offload_cache": true,
       "anything": [
         "352",
