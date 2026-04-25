@@ -1,6 +1,23 @@
-# AGENTS.md
+## Mandatory Agent Skills
 
-Cloud Code guidance for the `undresser-pyworker/` repository.
+All agents working in this repository MUST apply the following governance skills before writing code, committing, or pushing:
+
+| Skill | Purpose |
+|-------|---------|
+| `branch-isolation` | Agent vs human branch separation — agents stay on `paperclip/*` only |
+| `commit-and-push-policy` | Conventional Commits + Paperclip trailer; no force-push; PRs require board approval |
+| `senior-dev-style-backend` | Python/FastAPI code quality bar (backend repo) |
+| `senior-dev-style-frontend` | TypeScript/React code quality bar (frontend repo) |
+| `feature-delivery-handoff` | Structured handoff comment before marking ready for board review |
+| `human-developer-coordination` | Detecting and avoiding conflicts with the human developer team |
+
+Skills are located at `.claude/skills/` in each repo and at the workspace root (`/srv/ai-company/workspaces/nudelab/.claude/skills/`).
+
+# AGENTS.md — undresser-pyworker
+
+Cloud Code guidance for the `undresser-pyworker/` repository (NudeLab Python worker for Vast.ai).
+
+---
 
 ## Branch
 
