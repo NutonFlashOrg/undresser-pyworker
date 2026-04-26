@@ -12,7 +12,7 @@ Vast instance: A100, comfyui: false
 
 Env vars required on the Vast template:
   BACKEND            = lora-train
-  SD_SCRIPTS_DIR     = /workspace/kohya_ss/sd_scripts
+  SD_SCRIPTS_DIR     = /app/sd_scripts  (NUD-65 image layout)
   BACKEND_URL        = https://<nudelab-backend>/
   S3_ENDPOINT_URL    = ...
   S3_ACCESS_KEY_ID   = ...
