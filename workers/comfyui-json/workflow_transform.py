@@ -495,6 +495,14 @@ def _patch_workflow(
                         cur_text, user_prompt
                     )
                     break
+    # CLIPTextEncodeFlux: inject user_prompt into clip_l + t5xxl (FLUX Schnell T2I)
+    if user_prompt:
+        for node in wf.values():
+            if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncodeFlux":
+                inputs = node.setdefault("inputs", {})
+                inputs["clip_l"] = user_prompt
+                inputs["t5xxl"] = user_prompt
+                break
     return wf
 
 
