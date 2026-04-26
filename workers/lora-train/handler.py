@@ -200,8 +200,24 @@ def _write_config_toml(
     output_dir: Path,
     resume_checkpoint_local: str | None = None,
 ) -> None:
-    """Write kohya-ss train_network.py config.toml from training_config payload fields."""
+    """Write kohya-ss train_network.py config.toml from training_config payload fields.
+
+    Payload key mapping (confirmed NUD-44 / NUD-63 contract):
+      training_config["steps"]         → max_train_steps
+      training_config["framework"]     → stripped (internal, not a kohya-ss field)
+    All other keys are passed through verbatim.
+    """
     cfg = dict(training_config)
+
+    # Normalize payload key → kohya-ss key
+    if "steps" in cfg and "max_train_steps" not in cfg:
+        cfg["max_train_steps"] = cfg.pop("steps")
+    else:
+        cfg.pop("steps", None)  # remove if max_train_steps already present
+
+    # Strip internal-only keys that kohya-ss does not understand
+    cfg.pop("framework", None)
+
     cfg.setdefault("train_data_dir", str(image_dir))
     cfg.setdefault("output_dir", str(output_dir))
     cfg.setdefault("output_name", "lora_output")
@@ -210,8 +226,6 @@ def _write_config_toml(
     cfg.setdefault("mixed_precision", "bf16")
     cfg.setdefault("save_precision", "bf16")
     cfg.setdefault("logging_dir", str(output_dir / "logs"))
-    # Required kohya-ss dataset config structure: one repetition folder
-    # If train_data_dir already contains subfolders (N_concept), leave it alone.
     if resume_checkpoint_local:
         cfg["resume"] = resume_checkpoint_local
 
@@ -429,7 +443,10 @@ def run_lora_training(payload: dict) -> dict:
     output_destination: dict = payload.get("output_destination") or {}
     resume_from_checkpoint: bool = bool(payload.get("resume_from_checkpoint"))
     resume_checkpoint_path: str = payload.get("resume_checkpoint_path") or ""
-    total_steps: int = int(training_config.get("max_train_steps") or 1000)
+    # NUD-44/NUD-63 confirmed key is "steps"; accept "max_train_steps" as fallback
+    total_steps: int = int(
+        training_config.get("steps") or training_config.get("max_train_steps") or 1000
+    )
 
     image_dir = LORA_IMAGES_BASE / training_run_id
     output_dir = LORA_OUTPUT_BASE / training_run_id

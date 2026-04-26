@@ -49,7 +49,8 @@ def workload_calculator(payload: dict) -> float:
     """
     inp = payload.get("input") or payload
     training_config = inp.get("training_config") or {}
-    max_steps = training_config.get("max_train_steps")
+    # NUD-44/NUD-63 confirmed key is "steps"; accept "max_train_steps" as fallback
+    max_steps = training_config.get("steps") or training_config.get("max_train_steps")
     if max_steps:
         try:
             steps = float(max_steps)
