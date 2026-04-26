@@ -9,6 +9,7 @@ Undresser lanes:
 - WAN22_IV2V_FACESWAP_5090  (Blackwell, video IV2V)
 - ZIMAGE_TURBO_I2I_5090  (Blackwell, image I2I)
 - FLUX_S2_I2I_5090  (Blackwell, image I2I)
+- FLUX_SCHNELL_T2I_4090  (Ada, image T2I, SFW)
 """
 
 import logging
@@ -39,6 +40,7 @@ _DEFAULT_BENCHMARK_FILES: dict[str, str] = {
     "WAN22_IV2V_FACESWAP_5090": "benchmark_WAN22_IV2V_FACESWAP_5090.json",
     "ZIMAGE_TURBO_I2I_5090": "benchmark_ZIMAGE_TURBO_I2I_5090.json",
     "FLUX_S2_I2I_5090": "benchmark_FLUX_S2_I2I_5090.json",
+    "FLUX_SCHNELL_T2I_4090": "benchmark_FLUX_SCHNELL_T2I_4090.json",
 }
 
 # BENCHMARK_GENERATION_LANE (template/calibration) → input.generation_lane for workload_calculator / SDK cost=.
@@ -48,6 +50,7 @@ _BENCHMARK_ENV_LANE_TO_REQUEST_GENERATION_LANE: dict[str, str] = {
     "WAN22_IV2V_FACESWAP_5090": "WAN22_IV2V_FACESWAP_5090",
     "ZIMAGE_TURBO_I2I_5090": "ZIMAGE_TURBO_I2I_5090",
     "FLUX_S2_I2I_5090": "FLUX_S2_I2I_5090",
+    "FLUX_SCHNELL_T2I_4090": "FLUX_SCHNELL_T2I_4090",
 }
 # Lanes that may appear on input.generation_lane (bot traffic). Declared load comes from non-empty
 # ``input.vast_workload_units`` when valid (matches bot SDK precedence), else template env
