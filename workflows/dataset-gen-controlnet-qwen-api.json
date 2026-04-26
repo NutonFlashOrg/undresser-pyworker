@@ -1,0 +1,282 @@
+{
+  "1": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "ETN_LoadImageBase64",
+    "_meta": {
+      "title": "approved_face_url"
+    }
+  },
+  "2": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "ETN_LoadImageBase64",
+    "_meta": {
+      "title": "approved_body_url"
+    }
+  },
+  "3": {
+    "inputs": {
+      "image": ""
+    },
+    "class_type": "ETN_LoadImageBase64",
+    "_meta": {
+      "title": "approved_collage_url"
+    }
+  },
+  "10": {
+    "inputs": {
+      "preprocessor": "DWPreprocessor",
+      "image": ["2", 0],
+      "resolution": 512
+    },
+    "class_type": "AIO_Preprocessor",
+    "_meta": {
+      "title": "body_pose_extractor"
+    }
+  },
+  "20": {
+    "inputs": {
+      "unet_name": "flux2-klein-4b-Q8_0.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Load FLUX.2 klein 4B (GGUF)"
+    }
+  },
+  "21": {
+    "inputs": {
+      "clip_name": "qwen_3_8b_fp8mixed.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load Qwen3 Text Encoder"
+    }
+  },
+  "22": {
+    "inputs": {
+      "vae_name": "flux2-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load FLUX.2 VAE"
+    }
+  },
+  "23": {
+    "inputs": {
+      "control_net_name": "flux1-controlnet-union-pro.safetensors"
+    },
+    "class_type": "ControlNetLoader",
+    "_meta": {
+      "title": "Load ControlNet (FLUX Union — OPEN QUESTION: confirm checkpoint)"
+    }
+  },
+  "30": {
+    "inputs": {
+      "text": "character portrait, standing pose, natural lighting",
+      "clip": ["21", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "31": {
+    "inputs": {
+      "text": "",
+      "clip": ["21", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "Negative Prompt"
+    }
+  },
+  "32": {
+    "inputs": {
+      "positive": ["30", 0],
+      "negative": ["31", 0],
+      "control_net": ["23", 0],
+      "image": ["10", 0],
+      "strength": 0.7,
+      "start_percent": 0.0,
+      "end_percent": 1.0
+    },
+    "class_type": "ControlNetApplyAdvanced",
+    "_meta": {
+      "title": "Apply OpenPose ControlNet"
+    }
+  },
+  "40": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 1,
+      "resolution_steps": 1,
+      "image": ["3", 0]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "Scale Collage to 1MP"
+    }
+  },
+  "41": {
+    "inputs": {
+      "pixels": ["40", 0],
+      "vae": ["22", 0]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "Encode Collage Latent"
+    }
+  },
+  "42": {
+    "inputs": {
+      "conditioning": ["32", 0],
+      "latent": ["41", 0]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "Collage Reference (Positive)"
+    }
+  },
+  "43": {
+    "inputs": {
+      "conditioning": ["32", 1],
+      "latent": ["41", 0]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "Collage Reference (Negative)"
+    }
+  },
+  "50": {
+    "inputs": {
+      "upscale_method": "nearest-exact",
+      "megapixels": 0.25,
+      "resolution_steps": 1,
+      "image": ["1", 0]
+    },
+    "class_type": "ImageScaleToTotalPixels",
+    "_meta": {
+      "title": "Scale Face Reference"
+    }
+  },
+  "51": {
+    "inputs": {
+      "pixels": ["50", 0],
+      "vae": ["22", 0]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "Encode Face Latent"
+    }
+  },
+  "52": {
+    "inputs": {
+      "conditioning": ["42", 0],
+      "latent": ["51", 0]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "Face Reference (Positive)"
+    }
+  },
+  "53": {
+    "inputs": {
+      "conditioning": ["43", 0],
+      "latent": ["51", 0]
+    },
+    "class_type": "ReferenceLatent",
+    "_meta": {
+      "title": "Face Reference (Negative)"
+    }
+  },
+  "60": {
+    "inputs": {
+      "width": 768,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Latent 768x1024"
+    }
+  },
+  "61": {
+    "inputs": {
+      "noise_seed": 1234567890123456
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "62": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "63": {
+    "inputs": {
+      "steps": 20,
+      "width": 768,
+      "height": 1024
+    },
+    "class_type": "Flux2Scheduler",
+    "_meta": {
+      "title": "Flux2Scheduler"
+    }
+  },
+  "64": {
+    "inputs": {
+      "cfg": 3.5,
+      "model": ["20", 0],
+      "positive": ["52", 0],
+      "negative": ["53", 0]
+    },
+    "class_type": "CFGGuider",
+    "_meta": {
+      "title": "CFGGuider"
+    }
+  },
+  "65": {
+    "inputs": {
+      "noise": ["61", 0],
+      "guider": ["64", 0],
+      "sampler": ["62", 0],
+      "sigmas": ["63", 0],
+      "latent_image": ["60", 0]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "70": {
+    "inputs": {
+      "samples": ["65", 0],
+      "vae": ["22", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "71": {
+    "inputs": {
+      "filename_prefix": "dataset-gen",
+      "images": ["70", 0]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  }
+}
