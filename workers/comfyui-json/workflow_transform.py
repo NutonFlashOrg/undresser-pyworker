@@ -495,6 +495,29 @@ def _patch_workflow(
                         cur_text, user_prompt
                     )
                     break
+
+    # LoRA injection: when generation job carries lora_path, inject into LoraLoader nodes.
+    # lora_path must resolve to a file the ComfyUI backend can load (local path or mounted name).
+    # S3 URLs (s3://) are passed through as-is; the backend is responsible for staging the file.
+    lora_path = (job_input.get("lora_path") or "").strip()
+    if lora_path:
+        lora_nodes_found = 0
+        for node in wf.values():
+            if (
+                isinstance(node, dict)
+                and node.get("class_type") in ("LoraLoader", "LoRALoader", "LoraLoaderModelOnly")
+            ):
+                node.setdefault("inputs", {})["lora_name"] = lora_path
+                lora_nodes_found += 1
+        if lora_nodes_found == 0:
+            logger.warning(
+                "lora_path=%r provided but no LoraLoader node found in workflow; "
+                "LoRA will not be applied",
+                lora_path,
+            )
+        else:
+            logger.info("Injected lora_path=%r into %d LoraLoader node(s)", lora_path, lora_nodes_found)
+
     return wf
 
 
