@@ -20,7 +20,7 @@ Env vars consumed (set on the Vast instance template):
   S3_SECRET_ACCESS_KEY
   S3_REGION             — default "us-east-1"
   BACKEND_URL           — NudeLab backend base URL for progress/completion callbacks
-  SD_SCRIPTS_DIR        — path to sd_scripts repo (default /workspace/kohya_ss/sd_scripts)
+  SD_SCRIPTS_DIR        — path to sd_scripts repo (default /app/sd_scripts per NUD-65 image)
   LORA_OUTPUT_BASE      — base dir for training output (default /data/lora_output)
   LORA_IMAGES_BASE      — base dir for training images (default /data/images)
 """
@@ -61,7 +61,7 @@ except ImportError:
 
 _log = logging.getLogger("lora-train")
 
-SD_SCRIPTS_DIR = Path(os.getenv("SD_SCRIPTS_DIR", "/workspace/kohya_ss/sd_scripts"))
+SD_SCRIPTS_DIR = Path(os.getenv("SD_SCRIPTS_DIR", "/app/sd_scripts"))
 LORA_OUTPUT_BASE = Path(os.getenv("LORA_OUTPUT_BASE", "/data/lora_output"))
 LORA_IMAGES_BASE = Path(os.getenv("LORA_IMAGES_BASE", "/data/images"))
 BACKEND_URL = os.getenv("BACKEND_URL", "")
@@ -287,15 +287,16 @@ def _run_training(
 
     OOM detection: raises RuntimeError("OOM") on CUDA out of memory.
     """
-    train_script = SD_SCRIPTS_DIR / "train_network.py"
+    # kohya-ss train_network.py imports relative to its own directory (e.g. library.*),
+    # so run it with cwd=SD_SCRIPTS_DIR rather than via absolute path from a different cwd.
     cmd = [
         sys.executable,
         "-u",  # unbuffered stdout
-        str(train_script),
+        "train_network.py",
         "--config",
         str(config_path),
     ]
-    _log.info("Launching training: %s", " ".join(cmd))
+    _log.info("Launching training (cwd=%s): %s", SD_SCRIPTS_DIR, " ".join(cmd))
 
     s3_client = _s3_client(s3_endpoint_url)
     uploaded_checkpoints: set[str] = set()
@@ -311,6 +312,7 @@ def _run_training(
 
     proc = subprocess.Popen(
         cmd,
+        cwd=str(SD_SCRIPTS_DIR),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
