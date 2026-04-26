@@ -39,7 +39,7 @@
   },
   "20": {
     "inputs": {
-      "unet_name": "flux2-klein-4b-Q8_0.gguf"
+      "unet_name": "flux1-dev-Q8_0.gguf"
     },
     "class_type": "UnetLoaderGGUF",
     "_meta": {
@@ -68,11 +68,11 @@
   },
   "23": {
     "inputs": {
-      "control_net_name": "flux1-controlnet-union-pro.safetensors"
+      "control_net_name": "FLUX.1-dev-Controlnet-Union.safetensors"
     },
     "class_type": "ControlNetLoader",
     "_meta": {
-      "title": "Load ControlNet (FLUX Union — OPEN QUESTION: confirm checkpoint)"
+      "title": "Load ControlNet (InstantX FLUX.1-dev-Controlnet-Union)"
     }
   },
   "30": {
