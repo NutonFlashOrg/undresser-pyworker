@@ -39,6 +39,7 @@ _DEFAULT_BENCHMARK_FILES: dict[str, str] = {
     "WAN22_IV2V_FACESWAP_5090": "benchmark_WAN22_IV2V_FACESWAP_5090.json",
     "ZIMAGE_TURBO_I2I_5090": "benchmark_ZIMAGE_TURBO_I2I_5090.json",
     "FLUX_S2_I2I_5090": "benchmark_FLUX_S2_I2I_5090.json",
+    "DATASET_GEN_A100": "benchmark_DATASET_GEN_A100.json",
 }
 
 # BENCHMARK_GENERATION_LANE (template/calibration) → input.generation_lane for workload_calculator / SDK cost=.
@@ -48,6 +49,7 @@ _BENCHMARK_ENV_LANE_TO_REQUEST_GENERATION_LANE: dict[str, str] = {
     "WAN22_IV2V_FACESWAP_5090": "WAN22_IV2V_FACESWAP_5090",
     "ZIMAGE_TURBO_I2I_5090": "ZIMAGE_TURBO_I2I_5090",
     "FLUX_S2_I2I_5090": "FLUX_S2_I2I_5090",
+    "DATASET_GEN_A100": "DATASET_GEN_A100",
 }
 # Lanes that may appear on input.generation_lane (bot traffic). Declared load comes from non-empty
 # ``input.vast_workload_units`` when valid (matches bot SDK precedence), else template env

@@ -573,6 +573,9 @@ def transform_app_to_vast(payload: dict) -> dict:
         )
         if s3_bucket:
             out_input["s3_bucket"] = s3_bucket
+        s3_prefix = (job_input.get("s3_prefix") or "").strip()
+        if s3_prefix:
+            out_input["s3_prefix"] = s3_prefix
         return _merge_passthrough({"input": out_input}, payload)
     finally:
         if scratch_dir is not None:
