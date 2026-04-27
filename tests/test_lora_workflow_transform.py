@@ -99,14 +99,11 @@ def _make_payload(
 # Helper: run transform with S3 mocked out
 # ---------------------------------------------------------------------------
 
-def _run_transform(payload: dict, lora_local_path: str = "/tmp/lora/char.safetensors") -> dict:
+def _run_transform(payload: dict, lora_filename: str = "char.safetensors") -> dict:
     """Run transform_app_to_vast with S3 download mocked."""
 
-    def fake_download_lora(lora_ref, scratch_dir):
-        p = Path(lora_local_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_bytes(b"fake safetensors")
-        return p
+    def fake_download_lora(lora_ref):
+        return lora_filename
 
     with patch.object(wt, "_download_lora_checkpoint", side_effect=fake_download_lora):
         return wt.transform_app_to_vast(payload)
@@ -240,7 +237,7 @@ def test_insert_lora_node_no_sampler_is_noop():
         "30": {"inputs": {"text": "hello", "clip": ["20", 1]}, "class_type": "CLIPTextEncode", "_meta": {}},
     }
     original = copy.deepcopy(wf)
-    wt._insert_lora_node(wf, "/tmp/lora.safetensors")
+    wt._insert_lora_node(wf, "lora.safetensors", 1.0, 1.0)
     assert wf == original, "Workflow must be unchanged when no KSampler found"
 
 
@@ -250,7 +247,7 @@ def test_insert_lora_node_no_clip_text_is_noop():
         "50": {"inputs": {"model": ["20", 0], "seed": 0}, "class_type": "KSampler", "_meta": {}},
     }
     original = copy.deepcopy(wf)
-    wt._insert_lora_node(wf, "/tmp/lora.safetensors")
+    wt._insert_lora_node(wf, "lora.safetensors", 1.0, 1.0)
     assert wf == original, "Workflow must be unchanged when no CLIPTextEncode with clip ref found"
 
 

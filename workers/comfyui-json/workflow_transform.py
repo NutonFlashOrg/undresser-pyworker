@@ -385,7 +385,7 @@ def _new_node_id(workflow: dict) -> str:
     return str(nid)
 
 
-def _insert_lora_node(wf: dict, lora_local_path: str) -> None:
+def _insert_lora_node(wf: dict, lora_name: str, strength_model: float, strength_clip: float) -> None:
     """Insert a LoraLoader node into the workflow in-place.
 
     Finds the first KSampler's model input and any CLIPTextEncode's clip input,
@@ -418,16 +418,16 @@ def _insert_lora_node(wf: dict, lora_local_path: str) -> None:
     lora_nid = _new_node_id(wf)
     wf[lora_nid] = {
         "inputs": {
-            "lora_name": lora_local_path,
-            "strength_model": 1.0,
-            "strength_clip": 1.0,
+            "lora_name": lora_name,
+            "strength_model": strength_model,
+            "strength_clip": strength_clip,
             "model": model_src,
             "clip": clip_src,
         },
         "class_type": "LoraLoader",
         "_meta": {"title": "LoRA Loader (character checkpoint)"},
     }
-    logger.info("Inserted LoraLoader node %s lora_name=%s", lora_nid, lora_local_path)
+    logger.info("Inserted LoraLoader node %s lora_name=%s", lora_nid, lora_name)
 
     wf[sampler_nid]["inputs"]["model"] = [lora_nid, 0]
 
@@ -435,6 +435,24 @@ def _insert_lora_node(wf: dict, lora_local_path: str) -> None:
         if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode":
             if (node.get("inputs") or {}).get("clip") == clip_src:
                 node["inputs"]["clip"] = [lora_nid, 1]
+
+
+def _apply_lora_to_workflow(wf: dict, lora_name: str, strength_model: float, strength_clip: float) -> None:
+    """Apply LoRA to workflow in-place: update existing LoraLoader if found, else insert one."""
+    for nid, node in wf.items():
+        if not isinstance(node, dict):
+            continue
+        ct = node.get("class_type")
+        if ct not in ("LoraLoader", "LoraLoaderModelOnly"):
+            continue
+        inputs = node.setdefault("inputs", {})
+        inputs["lora_name"] = lora_name
+        inputs["strength_model"] = strength_model
+        if ct == "LoraLoader":
+            inputs["strength_clip"] = strength_clip
+        logger.info("Updated existing %s node %s lora_name=%s", ct, nid, lora_name)
+        return
+    _insert_lora_node(wf, lora_name, strength_model, strength_clip)
 
 
 def _prepend_lora_trigger_word(wf: dict, trigger_word: str, prompt_node_title: str) -> None:
@@ -458,8 +476,16 @@ def _prepend_lora_trigger_word(wf: dict, trigger_word: str, prompt_node_title: s
         break
 
 
-def _download_lora_checkpoint(lora_ref: dict, scratch_dir: Path) -> Path:
-    """Download a LoRA .safetensors file from S3 and return the local path."""
+def _comfy_loras_dir() -> Path:
+    return Path(os.getenv("COMFY_LORAS_DIR") or "/app/models/loras")
+
+
+def _download_lora_checkpoint(lora_ref: dict) -> str:
+    """Download a LoRA .safetensors file from S3 to the ComfyUI loras directory.
+
+    Returns the filename (relative to the loras directory) suitable for use as
+    ``lora_name`` in a LoraLoader node.
+    """
     import boto3
 
     try:
@@ -493,18 +519,19 @@ def _download_lora_checkpoint(lora_ref: dict, scratch_dir: Path) -> Path:
         config=build_s3_boto_config(signature_version="s3v4"),
     )
 
-    scratch_dir.mkdir(parents=True, exist_ok=True)
+    loras_dir = _comfy_loras_dir()
+    loras_dir.mkdir(parents=True, exist_ok=True)
     filename = _safe_component(Path(key).name) or "lora"
     if not filename.endswith(".safetensors"):
         filename += ".safetensors"
-    local_path = (scratch_dir / filename).resolve()
-    if not str(local_path).startswith(str(scratch_dir.resolve())):
+    local_path = (loras_dir / filename).resolve()
+    if not str(local_path).startswith(str(loras_dir.resolve())):
         raise RuntimeError("Invalid lora_checkpoint path traversal")
 
     with S3_IO_SEM:
         download_file_with_retry(client, bucket, key, str(local_path))
     logger.info("Downloaded lora_checkpoint %s/%s -> %s", bucket, key, local_path)
-    return local_path
+    return filename
 
 
 def _patch_workflow(
@@ -513,7 +540,7 @@ def _patch_workflow(
     job_input: dict,
     downloaded_images: list[tuple[str, Path]],
     path_assets: list[tuple[str, Path, str]] | None = None,
-    lora_local_path: str | None = None,
+    lora_name: str | None = None,
     lora_trigger_word: str | None = None,
 ) -> dict:
     """Patch workflow: sageattn override, VHS_VideoCombine prefix, ETN_LoadImageBase64
@@ -636,10 +663,12 @@ def _patch_workflow(
                     )
                     break
 
-    # LoRA: insert node then prepend trigger word (trigger word applied after user_prompt
+    # LoRA: apply node then prepend trigger word (trigger word applied after user_prompt
     # so the final positive text is: "{trigger_word}, {prompt_with_user_content}")
-    if lora_local_path:
-        _insert_lora_node(wf, lora_local_path)
+    if lora_name:
+        strength_model = float(os.getenv("LORA_STRENGTH_MODEL") or "1.0")
+        strength_clip = float(os.getenv("LORA_STRENGTH_CLIP") or "1.0")
+        _apply_lora_to_workflow(wf, lora_name, strength_model, strength_clip)
     if lora_trigger_word:
         _prepend_lora_trigger_word(wf, lora_trigger_word, prompt_title)
 
@@ -680,11 +709,9 @@ def transform_app_to_vast(payload: dict) -> dict:
 
     lora_checkpoint = job_input.get("lora_checkpoint")
     lora_trigger_word = (job_input.get("lora_trigger_word") or "").strip() or None
-    lora_scratch_dir: Path | None = None
-    lora_local_path: str | None = None
+    lora_name: str | None = None
     if isinstance(lora_checkpoint, dict):
-        lora_scratch_dir = Path("/tmp/lora") / run_subdir
-        lora_local_path = str(_download_lora_checkpoint(lora_checkpoint, lora_scratch_dir))
+        lora_name = _download_lora_checkpoint(lora_checkpoint)
 
     try:
         patched = _patch_workflow(
@@ -693,7 +720,7 @@ def transform_app_to_vast(payload: dict) -> dict:
             job_input,
             downloaded_images,
             path_assets=path_assets,
-            lora_local_path=lora_local_path,
+            lora_name=lora_name,
             lora_trigger_word=lora_trigger_word,
         )
         randomize_workflow_seeds(patched)
@@ -731,21 +758,22 @@ def transform_app_to_vast(payload: dict) -> dict:
         )
         if s3_bucket:
             out_input["s3_bucket"] = s3_bucket
+        s3_prefix = (job_input.get("s3_prefix") or "").strip()
+        if s3_prefix:
+            out_input["s3_prefix"] = s3_prefix
         return _merge_passthrough({"input": out_input}, payload)
     finally:
         if scratch_dir is not None:
             _cleanup_worker_s3_scratch(scratch_dir)
-        if lora_scratch_dir is not None:
-            _cleanup_worker_s3_scratch(lora_scratch_dir)
 
 
 def _cleanup_worker_s3_scratch(scratch_dir: Path) -> None:
-    """Remove per-job directory under ``/tmp/`` after S3 downloads are inlined / copied."""
+    """Remove per-job directory under ``/tmp/input`` after S3 downloads are inlined / copied."""
     try:
-        base = Path("/tmp").resolve()
+        base = Path("/tmp/input").resolve()
         job = scratch_dir.resolve()
         if not str(job).startswith(str(base)):
-            logger.warning("Skip scratch cleanup (path outside /tmp): %s", scratch_dir)
+            logger.warning("Skip scratch cleanup (path outside /tmp/input): %s", scratch_dir)
             return
         if job.exists():
             shutil.rmtree(job, ignore_errors=True)
