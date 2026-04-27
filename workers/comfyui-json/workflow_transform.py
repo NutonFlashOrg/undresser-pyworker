@@ -370,15 +370,155 @@ def _replace_first_quoted_segment(prompt_template: str, spoken_text: str) -> str
     return f"{prompt_template[: start + 1]}{spoken_text}{prompt_template[end:]}"
 
 
+_CHECKPOINT_CLASS_TYPES = frozenset(
+    {"CheckpointLoaderSimple", "CheckpointLoader", "unCLIPCheckpointLoader"}
+)
+_SAMPLER_CLASS_TYPES = frozenset({"KSampler", "KSamplerAdvanced"})
+
+
+def _new_node_id(workflow: dict) -> str:
+    """Return the next unused integer node ID as a string."""
+    used = {int(k) for k in workflow if k.isdigit()}
+    nid = (max(used) + 1) if used else 1
+    while str(nid) in workflow:
+        nid += 1
+    return str(nid)
+
+
+def _insert_lora_node(wf: dict, lora_local_path: str) -> None:
+    """Insert a LoraLoader node into the workflow in-place.
+
+    Finds the first KSampler's model input and any CLIPTextEncode's clip input,
+    splices in LoraLoader between those sources and their consumers.
+    No-op if no sampler or no clip-bearing text encoder is found.
+    """
+    sampler_nid: str | None = None
+    for nid, node in wf.items():
+        if isinstance(node, dict) and node.get("class_type") in _SAMPLER_CLASS_TYPES:
+            if isinstance((node.get("inputs") or {}).get("model"), list):
+                sampler_nid = nid
+                break
+    if sampler_nid is None:
+        logger.warning("LoRA inject: no KSampler with model ref found; skipping")
+        return
+
+    model_src: list = wf[sampler_nid]["inputs"]["model"]  # [src_node_id, slot]
+
+    clip_src: list | None = None
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode":
+            clip_input = (node.get("inputs") or {}).get("clip")
+            if isinstance(clip_input, list):
+                clip_src = clip_input
+                break
+    if clip_src is None:
+        logger.warning("LoRA inject: no CLIPTextEncode with clip ref found; skipping")
+        return
+
+    lora_nid = _new_node_id(wf)
+    wf[lora_nid] = {
+        "inputs": {
+            "lora_name": lora_local_path,
+            "strength_model": 1.0,
+            "strength_clip": 1.0,
+            "model": model_src,
+            "clip": clip_src,
+        },
+        "class_type": "LoraLoader",
+        "_meta": {"title": "LoRA Loader (character checkpoint)"},
+    }
+    logger.info("Inserted LoraLoader node %s lora_name=%s", lora_nid, lora_local_path)
+
+    wf[sampler_nid]["inputs"]["model"] = [lora_nid, 0]
+
+    for node in wf.values():
+        if isinstance(node, dict) and node.get("class_type") == "CLIPTextEncode":
+            if (node.get("inputs") or {}).get("clip") == clip_src:
+                node["inputs"]["clip"] = [lora_nid, 1]
+
+
+def _prepend_lora_trigger_word(wf: dict, trigger_word: str, prompt_node_title: str) -> None:
+    """Prepend `{trigger_word}, ` to the positive prompt CLIPTextEncode node in-place.
+
+    Matches by prompt_node_title first; falls back to the first CLIPTextEncode whose
+    title contains "positive" (case-insensitive).
+    """
+    trigger_prefix = f"{trigger_word}, "
+    for node in wf.values():
+        if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            continue
+        title = ((node.get("_meta") or {}).get("title") or "").strip()
+        if prompt_node_title and title != prompt_node_title:
+            continue
+        if not prompt_node_title and "positive" not in title.lower():
+            continue
+        cur_text = str((node.get("inputs") or {}).get("text") or "")
+        node.setdefault("inputs", {})["text"] = trigger_prefix + cur_text
+        logger.info("Prepended trigger word %r to prompt node %r", trigger_word, title)
+        break
+
+
+def _download_lora_checkpoint(lora_ref: dict, scratch_dir: Path) -> Path:
+    """Download a LoRA .safetensors file from S3 and return the local path."""
+    import boto3
+
+    try:
+        from .s3_boto_resilience import (
+            S3_IO_SEM,
+            build_s3_boto_config,
+            download_file_with_retry,
+        )
+    except ImportError:
+        from s3_boto_resilience import (
+            S3_IO_SEM,
+            build_s3_boto_config,
+            download_file_with_retry,
+        )
+
+    bucket = lora_ref.get("bucket")
+    key = lora_ref.get("key")
+    if not bucket or not key:
+        raise RuntimeError(f"lora_checkpoint missing bucket or key: {lora_ref!r}")
+
+    cfg = _get_s3_config()
+    if not cfg:
+        raise RuntimeError("S3 not configured; cannot download lora_checkpoint")
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=cfg["endpoint_url"],
+        aws_access_key_id=cfg["access_key_id"],
+        aws_secret_access_key=cfg["secret_access_key"],
+        region_name=cfg["region"],
+        config=build_s3_boto_config(signature_version="s3v4"),
+    )
+
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    filename = _safe_component(Path(key).name) or "lora"
+    if not filename.endswith(".safetensors"):
+        filename += ".safetensors"
+    local_path = (scratch_dir / filename).resolve()
+    if not str(local_path).startswith(str(scratch_dir.resolve())):
+        raise RuntimeError("Invalid lora_checkpoint path traversal")
+
+    with S3_IO_SEM:
+        download_file_with_retry(client, bucket, key, str(local_path))
+    logger.info("Downloaded lora_checkpoint %s/%s -> %s", bucket, key, local_path)
+    return local_path
+
+
 def _patch_workflow(
     workflow: dict,
     run_subdir: str,
     job_input: dict,
     downloaded_images: list[tuple[str, Path]],
     path_assets: list[tuple[str, Path, str]] | None = None,
+    lora_local_path: str | None = None,
+    lora_trigger_word: str | None = None,
 ) -> dict:
     """Patch workflow: sageattn override, VHS_VideoCombine prefix, ETN_LoadImageBase64
-    injection (base64 mode), LoadImage / VHS_LoadVideo injection (path mode), prompt.
+    injection (base64 mode), LoadImage / VHS_LoadVideo injection (path mode), prompt,
+    optional LoRA node insertion and trigger-word prepend.
     """
     wf = copy.deepcopy(workflow)
     # sageattn override: none (runtime patches it per GPU)
@@ -495,6 +635,14 @@ def _patch_workflow(
                         cur_text, user_prompt
                     )
                     break
+
+    # LoRA: insert node then prepend trigger word (trigger word applied after user_prompt
+    # so the final positive text is: "{trigger_word}, {prompt_with_user_content}")
+    if lora_local_path:
+        _insert_lora_node(wf, lora_local_path)
+    if lora_trigger_word:
+        _prepend_lora_trigger_word(wf, lora_trigger_word, prompt_title)
+
     return wf
 
 
@@ -530,6 +678,14 @@ def transform_app_to_vast(payload: dict) -> dict:
             download_entries, scratch_dir
         )
 
+    lora_checkpoint = job_input.get("lora_checkpoint")
+    lora_trigger_word = (job_input.get("lora_trigger_word") or "").strip() or None
+    lora_scratch_dir: Path | None = None
+    lora_local_path: str | None = None
+    if isinstance(lora_checkpoint, dict):
+        lora_scratch_dir = Path("/tmp/lora") / run_subdir
+        lora_local_path = str(_download_lora_checkpoint(lora_checkpoint, lora_scratch_dir))
+
     try:
         patched = _patch_workflow(
             workflow,
@@ -537,6 +693,8 @@ def transform_app_to_vast(payload: dict) -> dict:
             job_input,
             downloaded_images,
             path_assets=path_assets,
+            lora_local_path=lora_local_path,
+            lora_trigger_word=lora_trigger_word,
         )
         randomize_workflow_seeds(patched)
         s3_cfg = _get_s3_config()
@@ -577,15 +735,17 @@ def transform_app_to_vast(payload: dict) -> dict:
     finally:
         if scratch_dir is not None:
             _cleanup_worker_s3_scratch(scratch_dir)
+        if lora_scratch_dir is not None:
+            _cleanup_worker_s3_scratch(lora_scratch_dir)
 
 
 def _cleanup_worker_s3_scratch(scratch_dir: Path) -> None:
-    """Remove per-job directory under ``/tmp/input`` after S3 downloads are inlined / copied."""
+    """Remove per-job directory under ``/tmp/`` after S3 downloads are inlined / copied."""
     try:
-        base = Path("/tmp/input").resolve()
+        base = Path("/tmp").resolve()
         job = scratch_dir.resolve()
         if not str(job).startswith(str(base)):
-            logger.warning("Skip scratch cleanup (path outside /tmp/input): %s", scratch_dir)
+            logger.warning("Skip scratch cleanup (path outside /tmp): %s", scratch_dir)
             return
         if job.exists():
             shutil.rmtree(job, ignore_errors=True)
