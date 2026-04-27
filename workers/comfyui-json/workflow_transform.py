@@ -15,6 +15,8 @@ import os
 import random
 import re
 import shutil
+import urllib.parse
+import urllib.request
 import uuid
 from io import BytesIO
 from pathlib import Path
@@ -498,6 +500,29 @@ def _patch_workflow(
     return wf
 
 
+def _download_reference_image_url(url: str, scratch_dir: Path) -> Path:
+    """Download a reference image from a URL (pre-signed S3 or CDN) to scratch_dir.
+
+    Returns the local path. Raises RuntimeError on any download failure.
+    """
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    parsed = urllib.parse.urlparse(url)
+    ext = Path(parsed.path).suffix.lower()
+    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".bmp"):
+        ext = ".png"
+    local_path = (scratch_dir / f"reference_image{ext}").resolve()
+    if not str(local_path).startswith(str(scratch_dir.resolve())):
+        raise RuntimeError("Invalid reference image path traversal")
+    try:
+        urllib.request.urlretrieve(url, str(local_path))
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download reference_image_url {url!r}: {e}"
+        ) from e
+    logger.info("Downloaded reference image from %s -> %s", url, local_path)
+    return local_path
+
+
 def transform_app_to_vast(payload: dict) -> dict:
     """
     Transform app format to Vast API wrapper format.
@@ -529,6 +554,13 @@ def transform_app_to_vast(payload: dict) -> dict:
         downloaded_images, _audios, path_assets = _download_input_images(
             download_entries, scratch_dir
         )
+
+    reference_image_url = (job_input.get("reference_image_url") or "").strip() or None
+    if reference_image_url:
+        if scratch_dir is None:
+            scratch_dir = Path("/tmp/input") / run_subdir
+        ref_path = _download_reference_image_url(reference_image_url, scratch_dir)
+        path_assets.append(("Reference Image", ref_path, "image"))
 
     try:
         patched = _patch_workflow(
