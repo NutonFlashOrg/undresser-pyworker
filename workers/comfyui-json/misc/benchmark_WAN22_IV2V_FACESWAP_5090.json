@@ -144,7 +144,7 @@
         "151",
         0
       ],
-      "frame_load_cap": 0,
+      "frame_load_cap": 25,
       "skip_first_frames": 0,
       "select_every_nth": 1,
       "format": "AnimateDiff"
@@ -268,7 +268,7 @@
   },
   "150": {
     "inputs": {
-      "value": 720
+      "value": 360
     },
     "class_type": "INTConstant",
     "_meta": {
@@ -277,7 +277,7 @@
   },
   "151": {
     "inputs": {
-      "value": 1280
+      "value": 640
     },
     "class_type": "INTConstant",
     "_meta": {
@@ -423,7 +423,7 @@
   "211": {
     "inputs": {
       "frame_rate": [
-        "207",
+        "199",
         0
       ],
       "loop_count": 0,
@@ -436,7 +436,7 @@
       "pingpong": false,
       "save_output": true,
       "images": [
-        "352",
+        "215",
         0
       ],
       "audio": [
@@ -1131,7 +1131,7 @@
       "offload_model": false,
       "offload_cache": true,
       "anything": [
-        "352",
+        "215",
         0
       ]
     },
