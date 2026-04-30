@@ -14,16 +14,77 @@ Undresser lanes:
 import logging
 import os
 import random
+import socket
 import sys
 import uuid
 from pathlib import Path
 
+from aiohttp import web_runner as _aiohttp_web_runner
 from vastai import BenchmarkConfig, HandlerConfig, LogActionConfig, Worker, WorkerConfig
 
 for _name in ("botocore", "boto3", "s3transfer", "urllib3"):
     logging.getLogger(_name).setLevel(logging.WARNING)
 
 _log = logging.getLogger("comfyui-json")
+
+
+# ---------------------------------------------------------------------------
+# TCP keepalive on the listening socket.
+#
+# Vast PyWorker runs `aiohttp.web.TCPSite` with default socket options, so
+# accepted connections have SO_KEEPALIVE OFF. During a 10–30 minute video
+# inference the SDK ↔ worker TCP connection is fully idle (no chunked
+# response, no application heartbeat) — Vast's intermediate network hops
+# silently drop the idle TCP at their NAT/proxy idle timeout. The worker
+# happily finishes the job and uploads to S3, but its final
+# `web.Response(...)` writes into a dead socket, the SDK never receives
+# the body, and `worker_timeout=3600s` eventually fires on the client.
+#
+# Setting SO_KEEPALIVE + Linux TCP_KEEPIDLE/INTVL/CNT on the listening
+# socket makes accepted connections inherit the flag (Linux semantics),
+# so the kernel sends keepalive probes after 60s of idle and tears the
+# connection down within ~210s if a hop has dropped it. aiohttp's
+# `handler_cancellation=True` (already on) propagates the disconnect as
+# CancelledError into the handler, and the request fails fast — the SDK
+# retries to a fresh worker instead of waiting an hour.
+# ---------------------------------------------------------------------------
+
+_KEEPALIVE_IDLE_SEC = int(os.getenv("VAST_PYWORKER_TCP_KEEPIDLE_SEC", "60"))
+_KEEPALIVE_INTVL_SEC = int(os.getenv("VAST_PYWORKER_TCP_KEEPINTVL_SEC", "30"))
+_KEEPALIVE_CNT = int(os.getenv("VAST_PYWORKER_TCP_KEEPCNT", "5"))
+
+_orig_tcpsite_start = _aiohttp_web_runner.TCPSite.start
+
+
+async def _tcpsite_start_with_keepalive(self):  # type: ignore[no-untyped-def]
+    await _orig_tcpsite_start(self)
+    srv = getattr(self, "_server", None)
+    socks = getattr(srv, "sockets", None) or []
+    for s in socks:
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            for opt_name, opt_val in (
+                ("TCP_KEEPIDLE", _KEEPALIVE_IDLE_SEC),
+                ("TCP_KEEPINTVL", _KEEPALIVE_INTVL_SEC),
+                ("TCP_KEEPCNT", _KEEPALIVE_CNT),
+            ):
+                opt = getattr(socket, opt_name, None)
+                if opt is not None:
+                    s.setsockopt(socket.IPPROTO_TCP, opt, opt_val)
+        except OSError as exc:
+            _log.warning(
+                "Could not set TCP keepalive on listening socket: %s", exc
+            )
+    _log.info(
+        "TCP keepalive enabled on listening socket "
+        "(idle=%ds, intvl=%ds, cnt=%d)",
+        _KEEPALIVE_IDLE_SEC,
+        _KEEPALIVE_INTVL_SEC,
+        _KEEPALIVE_CNT,
+    )
+
+
+_aiohttp_web_runner.TCPSite.start = _tcpsite_start_with_keepalive  # type: ignore[method-assign]
 
 # API wrapper config (our backend on 8189; stock ComfyUI uses 18288)
 MODEL_SERVER_URL = os.getenv("MODEL_SERVER_URL", "http://127.0.0.1")
