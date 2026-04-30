@@ -286,6 +286,44 @@ def workload_calculator(payload: dict) -> float:
     )
 
 
+# How long the SDK handler will hold a request in its internal queue before
+# rejecting it back to Vast. With ``allow_parallel_requests=False`` (single
+# in-flight request per worker), a router-side stack of two long jobs onto
+# the same worker will exceed any short queue timeout and bounce the second
+# request — costly when each job takes 10–30 minutes.
+#
+# Per-lane defaults: photo lanes (FLUX, ZIMAGE) keep the original 60s — those
+# jobs run in seconds, so anything over a minute really is wedged. Video
+# lanes (WAN22 i2v / face-swap) need 40min headroom: a 20s source video runs
+# ~30min, so a queued second request must be willing to wait through the
+# first job. Override per-template via VAST_PYWORKER_MAX_QUEUE_TIME_SEC.
+_PHOTO_LANES = {"FLUX_S2_I2I_5090", "ZIMAGE_TURBO_I2I_5090"}
+_VIDEO_LANES = {"WAN22_I2V_LONG_5090", "WAN22_IV2V_FACESWAP_5090"}
+
+
+def _resolve_max_queue_time() -> float:
+    raw = os.getenv("VAST_PYWORKER_MAX_QUEUE_TIME_SEC")
+    if raw is not None and str(raw).strip() != "":
+        return float(raw)
+    bench_lane = (os.getenv("BENCHMARK_GENERATION_LANE") or "").strip().upper()
+    if bench_lane in _VIDEO_LANES:
+        return 2400.0
+    if bench_lane in _PHOTO_LANES:
+        return 60.0
+    # Unknown lane: pick the conservative video-sized default. A photo lane
+    # that goes over by 60s would have failed regardless; a video lane that
+    # rejects at 60s loses a 30-min job.
+    return 2400.0
+
+
+_MAX_QUEUE_TIME_SEC = _resolve_max_queue_time()
+_log.info(
+    "comfyui-json handler max_queue_time=%.0fs (lane=%s)",
+    _MAX_QUEUE_TIME_SEC,
+    os.getenv("BENCHMARK_GENERATION_LANE") or "<unset>",
+)
+
+
 worker_config = WorkerConfig(
     model_server_url=MODEL_SERVER_URL,
     model_server_port=MODEL_SERVER_PORT,
@@ -295,7 +333,7 @@ worker_config = WorkerConfig(
         HandlerConfig(
             route="/generate/sync",
             allow_parallel_requests=False,
-            max_queue_time=60.0,
+            max_queue_time=_MAX_QUEUE_TIME_SEC,
             workload_calculator=workload_calculator,
             request_parser=request_parser,
             benchmark_config=BenchmarkConfig(
